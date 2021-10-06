@@ -76,10 +76,7 @@ namespace CallCentre.Browser
                         await webView.EnsureCoreWebView2Async(null);
 
                         // Delete existing Cookies so previous logins won't remembered
-
-#if RELEASE
                         webView.CoreWebView2.CookieManager.DeleteAllCookies();
-#endif
                         // Navigate
                         webView.CoreWebView2.Navigate(_options.StartUrl);
 
@@ -92,8 +89,7 @@ namespace CallCentre.Browser
                     }
 
                     return browserResult;
-                }
-            }
+                }            }
         }
 
         private bool IsBrowserNavigatingToRedirectUri(Uri uri)
