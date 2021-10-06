@@ -2,14 +2,17 @@
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Net;
 using System.Reflection;
+using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using AutoUpdaterDotNET;
-using CallCentre.Browser;
 using CallCentre.Models;
 using CallCentre.Properties;
 using IdentityModel.OidcClient;
+using Microsoft.Net.Http.Server;
 using NAudio.Wave;
 
 namespace CallCentre
@@ -18,9 +21,8 @@ namespace CallCentre
     {
         private Process _process;
         private SipAccount _account;
-        private readonly OidcClient _oidcClient;
+        private OidcClient _oidcClient;
         private LoginResult _loginResult;
-
 
         private readonly string _microSipPath = Path.Combine(Environment.CurrentDirectory, "MicroSip");
 
@@ -51,18 +53,6 @@ namespace CallCentre
             var version = Assembly.GetEntryAssembly()?.GetName().Version;
             versionLabel.Text = $@"{Resources.Version}: {version}";
 
-            var options = new OidcClientOptions
-            {
-                Authority = Constants.ApiUrl,
-                ClientId = Constants.ClientId,
-                ClientSecret = Constants.ClientSecret,
-                RedirectUri = Constants.RedirectUri,
-                Scope = Constants.Scope,
-                Browser = new WinFormsWebView(),
-            };
-
-            _oidcClient = new OidcClient(options);
-
             LoginUser();
         }
 
@@ -70,7 +60,30 @@ namespace CallCentre
         {
             try
             {
-                _loginResult = await _oidcClient.LoginAsync();
+                string redirectUri = string.Format("http://127.0.0.1:7890/");
+
+                var settings = new WebListenerSettings();
+                settings.UrlPrefixes.Add(redirectUri);
+                var http = new WebListener(settings);
+                http.Start();
+
+                var options = new OidcClientOptions
+                {
+                    Authority = Constants.ApiUrl,
+                    ClientId = Constants.ClientId,
+                    Scope = Constants.Scope,
+                    RedirectUri = redirectUri
+                };
+
+                _oidcClient = new OidcClient(options);
+                var state = await _oidcClient.PrepareLoginAsync();
+                OpenBrowser(state.StartUrl);
+
+                var context = await http.AcceptAsync();
+
+                await SendResponseAsync(context.Response);
+
+                _loginResult = await _oidcClient.ProcessResponseAsync(context.Request.QueryString, state);
             }
             catch (Exception exception)
             {
@@ -111,6 +124,7 @@ namespace CallCentre
                 OpenPhone(_account);
             }
         }
+
 
         private void Main_FormClosing(object sender, FormClosingEventArgs e)
         {
@@ -267,6 +281,33 @@ namespace CallCentre
         {
             Process.Start("mmsys.cpl");
         }
+
+        private static async Task SendResponseAsync(Response response)
+        {
+            string responseString = $"<html><head></head><body>Please return to the app.</body></html>";
+            var buffer = Encoding.UTF8.GetBytes(responseString);
+
+            response.ContentLength = buffer.Length;
+
+            var responseOutput = response.Body;
+            await responseOutput.WriteAsync(buffer, 0, buffer.Length);
+            responseOutput.Flush();
+        }
+
+        public static void OpenBrowser(string url)
+        {
+            try
+            {
+                Process.Start(url);
+            }
+            catch
+            {
+                url = url.Replace("&", "^&");
+                Process.Start(new ProcessStartInfo("cmd", $"/c start {url}") { CreateNoWindow = true });
+            }
+        }
+
+
 
         #endregion
     }
