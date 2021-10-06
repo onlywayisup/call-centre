@@ -12,7 +12,6 @@ using AutoUpdaterDotNET;
 using CallCentre.Models;
 using CallCentre.Properties;
 using IdentityModel.OidcClient;
-using Microsoft.Net.Http.Server;
 using NAudio.Wave;
 
 namespace CallCentre
@@ -58,15 +57,14 @@ namespace CallCentre
 
         private async void LoginUser()
         {
+            string redirectUri = string.Format("http://127.0.0.1:7890/");
+
+            var httpListener = new HttpListener();
+            httpListener.Prefixes.Add(redirectUri);
+            httpListener.Start();
+
             try
             {
-                string redirectUri = string.Format("http://127.0.0.1:7890/");
-
-                var settings = new WebListenerSettings();
-                settings.UrlPrefixes.Add(redirectUri);
-                var http = new WebListener(settings);
-                http.Start();
-
                 var options = new OidcClientOptions
                 {
                     Authority = Constants.ApiUrl,
@@ -79,14 +77,16 @@ namespace CallCentre
                 var state = await _oidcClient.PrepareLoginAsync();
                 OpenBrowser(state.StartUrl);
 
-                var context = await http.AcceptAsync();
+                var context = await httpListener.GetContextAsync();
+                BringFormToFront();
+                await SendResponseAsync(context);
 
-                await SendResponseAsync(context.Response);
-
-                _loginResult = await _oidcClient.ProcessResponseAsync(context.Request.QueryString, state);
+                _loginResult = await _oidcClient.ProcessResponseAsync(context.Request.RawUrl, state);
             }
             catch (Exception exception)
             {
+                httpListener.Stop();
+
                 var result = MessageBox.Show(exception.Message, Resources.Error, MessageBoxButtons.RetryCancel);
                 if (result == DialogResult.Retry)
                 {
@@ -98,6 +98,11 @@ namespace CallCentre
                 }
 
                 return;
+            }
+            finally
+            {
+                httpListener.Stop();
+                httpListener.Close();
             }
 
             if (_loginResult.IsError)
@@ -282,16 +287,25 @@ namespace CallCentre
             Process.Start("mmsys.cpl");
         }
 
-        private static async Task SendResponseAsync(Response response)
+        #endregion
+
+
+        public void BringFormToFront()
         {
+            WindowState = FormWindowState.Minimized;
+            Show();
+            WindowState = FormWindowState.Normal;
+        }
+
+        private static async Task SendResponseAsync(HttpListenerContext context)
+        {
+            var response = context.Response;
             string responseString = $"<html><head></head><body>Please return to the app.</body></html>";
             var buffer = Encoding.UTF8.GetBytes(responseString);
-
-            response.ContentLength = buffer.Length;
-
-            var responseOutput = response.Body;
+            response.ContentLength64 = buffer.Length;
+            var responseOutput = response.OutputStream;
             await responseOutput.WriteAsync(buffer, 0, buffer.Length);
-            responseOutput.Flush();
+            responseOutput.Close();
         }
 
         public static void OpenBrowser(string url)
@@ -307,8 +321,5 @@ namespace CallCentre
             }
         }
 
-
-
-        #endregion
     }
 }
