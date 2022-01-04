@@ -57,7 +57,7 @@ namespace CallCentre
 
         private async void LoginUser()
         {
-            string redirectUri = string.Format("http://127.0.0.1:7890/");
+            const string redirectUri = "http://127.0.0.1:7890/";
 
             var httpListener = new HttpListener();
             httpListener.Prefixes.Add(redirectUri);
@@ -136,6 +136,9 @@ namespace CallCentre
             try
             {
                 ClosePhone();
+
+                var http = new HttpWrapper(_loginResult.AccessToken);
+                http.Invoke<object>("POST", Constants.LogoutUrl, string.Empty);
             }
             catch
             {
@@ -317,9 +320,8 @@ namespace CallCentre
             catch
             {
                 url = url.Replace("&", "^&");
-                Process.Start(new ProcessStartInfo("cmd", $"/c start {url}") { CreateNoWindow = true });
+                Process.Start(new ProcessStartInfo("cmd", $"/c start {url}") {CreateNoWindow = true});
             }
         }
-
     }
 }
