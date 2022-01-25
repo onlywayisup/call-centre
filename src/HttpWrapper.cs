@@ -29,11 +29,11 @@ namespace CallCentre
             var version = Assembly.GetEntryAssembly()?.GetName().Version;
             var name = Assembly.GetEntryAssembly()?.GetName().Name;
 
-
             httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
             httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_accessToken}");
             httpClient.DefaultRequestHeaders.Add("User-Agent", $"{name} {version}");
             httpClient.DefaultRequestHeaders.Add("MAC", Helpers.GetMacAddress());
+            httpClient.DefaultRequestHeaders.Add("Windows", Helpers.GetWindowsVersion());
 
             HttpResponseMessage response;
             var httpMethod = new HttpMethod(method);

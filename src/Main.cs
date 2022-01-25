@@ -52,6 +52,15 @@ namespace CallCentre
             var version = Assembly.GetEntryAssembly()?.GetName().Version;
             versionLabel.Text = $@"{Resources.Version}: {version}";
 
+            var os = Helpers.GetWindowsVersion();
+            if (os.Contains("Windows 7"))
+            {
+                MessageBox.Show("Підтримка Windows 7 закінчилася 14 січня 2020 року, у зв'язку з цим оновлення програми під цю версію операційної системи не будуть випускатиcя. " +
+                                "Корпорація Майкрософт рекомендує перейти на Windows 10, щоб ви завжди могли отримати необхідну допомогу та підтримку.",
+                    "Підтримка Windows 7 закінчилася",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+
             LoginUser();
         }
 
@@ -130,7 +139,6 @@ namespace CallCentre
             }
         }
 
-
         private void Main_FormClosing(object sender, FormClosingEventArgs e)
         {
             try
@@ -169,9 +177,7 @@ namespace CallCentre
             var path = Path.Combine(_microSipPath, "microsip.ini");
 
             if (File.Exists(path))
-            {
                 File.Delete(path);
-            }
 
             Thread.Sleep(1000);
 
@@ -303,7 +309,7 @@ namespace CallCentre
         private static async Task SendResponseAsync(HttpListenerContext context)
         {
             var response = context.Response;
-            string responseString = $"<html><head></head><body>Please return to the app.</body></html>";
+            const string responseString = "<html><head></head><body>Please return to the app.</body></html>";
             var buffer = Encoding.UTF8.GetBytes(responseString);
             response.ContentLength64 = buffer.Length;
             var responseOutput = response.OutputStream;

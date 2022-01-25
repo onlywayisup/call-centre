@@ -1,4 +1,5 @@
 ﻿using System.Net.NetworkInformation;
+using System.Runtime.InteropServices;
 
 namespace CallCentre
 {
@@ -20,6 +21,29 @@ namespace CallCentre
             }
 
             return macAddresses;
+        }
+
+        public static string GetWindowsVersion()
+        {
+            RtlGetVersion(out var version);
+            return $"Windows {version.MajorVersion}.{version.MinorVersion}.{version.BuildNumber}";
+        }
+        
+        
+        [DllImport("ntdll.dll", SetLastError = true)]
+        private static extern uint RtlGetVersion(out OsVersionInfo versionInformation); // return type should be the NtStatus enum
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct OsVersionInfo
+        {
+            private readonly uint OsVersionInfoSize;
+            internal readonly uint MajorVersion;
+            internal readonly uint MinorVersion;
+            internal readonly uint BuildNumber;
+            private readonly uint PlatformId;
+
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+            private readonly string CSDVersion;
         }
     }
 }
