@@ -10,9 +10,9 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using AutoUpdaterDotNET;
 using CallCentre.Models;
-using CallCentre.Properties;
 using IdentityModel.OidcClient;
 using NAudio.Wave;
+using Newtonsoft.Json;
 
 namespace CallCentre
 {
@@ -24,6 +24,7 @@ namespace CallCentre
         private LoginResult _loginResult;
 
         private readonly string _microSipPath = Path.Combine(Environment.CurrentDirectory, "MicroSip");
+        private readonly string _microSipConfigPath = Path.Combine(Environment.CurrentDirectory, "MicroSip", "microsip.ini");
 
         protected override CreateParams CreateParams
         {
@@ -50,16 +51,7 @@ namespace CallCentre
             AutoUpdater.Start(Constants.UpdateUrl);
 
             var version = Assembly.GetEntryAssembly()?.GetName().Version;
-            versionLabel.Text = $@"{Resources.Version}: {version}";
-
-            var os = Helpers.GetWindowsVersion();
-            if (os.Contains("Windows 7"))
-            {
-                MessageBox.Show("Підтримка Windows 7 закінчилася 14 січня 2020 року, у зв'язку з цим оновлення програми під цю версію операційної системи не будуть випускатиcя. " +
-                                "Корпорація Майкрософт рекомендує перейти на Windows 10, щоб ви завжди могли отримати необхідну допомогу та підтримку.",
-                    "Підтримка Windows 7 закінчилася",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
+            versionLabel.Text = $"Версія: {version}";
 
             LoginUser();
         }
@@ -96,7 +88,7 @@ namespace CallCentre
             {
                 httpListener.Stop();
 
-                var result = MessageBox.Show(exception.Message, Resources.Error, MessageBoxButtons.RetryCancel);
+                var result = MessageBox.Show(exception.Message, "Помилка", MessageBoxButtons.RetryCancel);
                 if (result == DialogResult.Retry)
                 {
                     LoginUser();
@@ -116,26 +108,57 @@ namespace CallCentre
 
             if (_loginResult.IsError)
             {
-                var result = MessageBox.Show(this, _loginResult.Error, Resources.Login, MessageBoxButtons.RetryCancel, MessageBoxIcon.Error);
+                var result = MessageBox.Show(this, _loginResult.Error, "Вхід", MessageBoxButtons.RetryCancel, MessageBoxIcon.Error);
                 if (result == DialogResult.Retry)
                 {
                     LoginUser();
                 }
-                else
-                {
-                    Close();
-                }
             }
             else
             {
-                var http = new HttpWrapper(_loginResult.AccessToken);
-                _account = http.Invoke<SipAccount>("GET", Constants.AutoProvisioningUrl, string.Empty);
+                try
+                {
+                    var http = new HttpWrapper(_loginResult.AccessToken);
+                    _account = http.Invoke<SipAccount>("GET", Constants.AutoProvisioningUrl, string.Empty);
 
-                userLabel.Text = _account?.DisplayName;
-                lineLabel.Text = _account?.InternalNumber;
+                    userLabel.Text = _account?.DisplayName;
+                    lineLabel.Text = _account?.InternalNumber;
 
-                CheckDevices();
-                OpenPhone(_account);
+                    CheckDevices();
+                    OpenPhone(_account);
+                }
+                catch
+                {
+                    OpenPhoneButton.Enabled = true;
+
+                    using (var reserve = new Reserve())
+                    {
+                        if (reserve.ShowDialog() == DialogResult.OK)
+                        {
+                            var reserveCode = reserve.richTextBox1.Text;
+                            if (!string.IsNullOrEmpty(reserveCode))
+                            {
+                                var data = Convert.FromBase64String(reserveCode);
+                                var config = Encoding.UTF8.GetString(data);
+                                var account = JsonConvert.DeserializeObject<SipAccount>(config);
+
+                                if (account.DateTime.Date != DateTime.Now.Date)
+                                {
+                                    MessageBox.Show("Застосовано невірний код", "Помилка", MessageBoxButtons.RetryCancel, MessageBoxIcon.Error);
+                                    Close();
+                                }
+
+                                _account = account;
+
+                                userLabel.Text = _account?.DisplayName;
+                                lineLabel.Text = _account?.InternalNumber;
+
+                                CheckDevices();
+                                OpenPhone(_account);
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -161,10 +184,10 @@ namespace CallCentre
                 var microphone = WaveIn.DeviceCount > 0;
                 var headphones = WaveOut.DeviceCount > 0;
 
-                micLabel.Text = microphone ? Resources.Connected : Resources.Not_connected;
+                micLabel.Text = microphone ? "Підключено" : "Не під'єднано";
                 micLabel.ForeColor = microphone ? Color.ForestGreen : Color.Red;
 
-                handphonesLabel.Text = headphones ? Resources.Connected : Resources.Not_connected;
+                handphonesLabel.Text = headphones ? "Підключено" : "Не під'єднано";
                 handphonesLabel.ForeColor = headphones ? Color.ForestGreen : Color.Red;
             }));
         }
@@ -172,24 +195,12 @@ namespace CallCentre
 
         #region Phone
 
-        private void CreateConfig(SipAccount account)
-        {
-            var path = Path.Combine(_microSipPath, "microsip.ini");
-
-            if (File.Exists(path))
-                File.Delete(path);
-
-            Thread.Sleep(1000);
-
-            using (var sw = File.CreateText(path))
-            {
-                sw.Write(account.Settings);
-            }
-        }
-
         private void OpenPhone(SipAccount account)
         {
-            CreateConfig(account);
+            using (var sw = File.CreateText(_microSipConfigPath))
+            {
+                sw.Write(account?.Settings);
+            }
 
             try
             {
@@ -206,15 +217,15 @@ namespace CallCentre
                 var result = _process.Start();
                 if (result)
                 {
-                    phoneLabel.Text = Resources.Launched;
+                    phoneLabel.Text = "Запущено";
                     phoneLabel.ForeColor = Color.ForestGreen;
                     OpenPhoneButton.Enabled = false;
                 }
                 else
                 {
-                    phoneLabel.Text = Resources.Not_launched;
+                    phoneLabel.Text = "Не запущено";
                     phoneLabel.ForeColor = Color.Red;
-                    MessageBox.Show(Resources.Phone_startup_error, Resources.Error, MessageBoxButtons.RetryCancel, MessageBoxIcon.Error);
+                    MessageBox.Show("Помилка запуску телефону", "Помилка", MessageBoxButtons.RetryCancel, MessageBoxIcon.Error);
                     OpenPhoneButton.Enabled = true;
                 }
 
@@ -224,7 +235,7 @@ namespace CallCentre
             }
             catch (Exception ex)
             {
-                MessageBox.Show(ex.Message, Resources.Phone_startup_error, MessageBoxButtons.RetryCancel, MessageBoxIcon.Error);
+                MessageBox.Show(ex.Message, "Помилка запуску телефону", MessageBoxButtons.RetryCancel, MessageBoxIcon.Error);
             }
         }
 
@@ -232,7 +243,7 @@ namespace CallCentre
         {
             Invoke(new MethodInvoker(delegate
             {
-                phoneLabel.Text = Resources.Not_launched;
+                phoneLabel.Text = "Не запущено";
                 phoneLabel.ForeColor = Color.Red;
                 OpenPhoneButton.Enabled = true;
             }));
@@ -254,21 +265,22 @@ namespace CallCentre
             }
             catch
             {
-                MessageBox.Show(Resources.Failed_to_close_module_MicroSip, Resources.Error, MessageBoxButtons.RetryCancel, MessageBoxIcon.Error);
+                MessageBox.Show("Не вдалося закрити модуль 'MicroSip'", "Помилка", MessageBoxButtons.RetryCancel, MessageBoxIcon.Error);
             }
 
             try
             {
-                var path = Path.Combine(_microSipPath, "microsip.ini");
-
-                if (File.Exists(path))
-                {
-                    File.Delete(path);
-                }
+                if (File.Exists(_microSipConfigPath))
+                    File.Delete(_microSipConfigPath);
             }
             catch
             {
-                MessageBox.Show(Resources.Failed_to_delete_settings_file, Resources.Error, MessageBoxButtons.RetryCancel, MessageBoxIcon.Error);
+                _process?.Kill();
+
+                Thread.Sleep(1000);
+
+                if (File.Exists(_microSipConfigPath))
+                    File.Delete(_microSipConfigPath);
             }
         }
 
@@ -299,7 +311,7 @@ namespace CallCentre
         #endregion
 
 
-        public void BringFormToFront()
+        private void BringFormToFront()
         {
             WindowState = FormWindowState.Minimized;
             Show();
@@ -317,7 +329,7 @@ namespace CallCentre
             responseOutput.Close();
         }
 
-        public static void OpenBrowser(string url)
+        private static void OpenBrowser(string url)
         {
             try
             {
@@ -326,8 +338,13 @@ namespace CallCentre
             catch
             {
                 url = url.Replace("&", "^&");
-                Process.Start(new ProcessStartInfo("cmd", $"/c start {url}") {CreateNoWindow = true});
+                Process.Start(new ProcessStartInfo("cmd", $"/c start {url}") { CreateNoWindow = true });
             }
+        }
+
+        private void toolStripButton1_Click(object sender, EventArgs e)
+        {
+            ClosePhone();
         }
     }
 }
