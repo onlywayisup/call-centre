@@ -11,6 +11,7 @@ using System.Windows.Forms;
 using AutoUpdaterDotNET;
 using CallCentre.Models;
 using IdentityModel.OidcClient;
+using Microsoft.Win32;
 using NAudio.Wave;
 using Newtonsoft.Json;
 
@@ -39,9 +40,14 @@ namespace CallCentre
         protected override void WndProc(ref Message m)
         {
             CheckDevices();
+
+            if (m.Msg == 0x11)
+            {
+                Close();
+            }
+
             base.WndProc(ref m);
         }
-
 
         public Main()
         {
@@ -53,7 +59,11 @@ namespace CallCentre
             var version = Assembly.GetEntryAssembly()?.GetName().Version;
             versionLabel.Text = $"Версія: {version}";
 
+            RemoveSystemMicroSip();
+
             LoginUser();
+
+            RegisterForSystemEvents();
         }
 
         private async void LoginUser()
@@ -192,6 +202,59 @@ namespace CallCentre
             }));
         }
 
+        private void RemoveSystemMicroSip()
+        {
+            var microSipLocalFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MicroSIP");
+            var microSipRoamingFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MicroSIP");
+
+            if (Directory.Exists(microSipRoamingFolder))
+            {
+                try
+                {
+                    _process = new Process
+                    {
+                        StartInfo =
+                        {
+                            WorkingDirectory = microSipLocalFolder,
+                            FileName = "microsip.exe",
+                            Arguments = "/exit"
+                        }
+                    };
+
+                    _process.Start();
+                }
+                catch
+                {
+                    // ignored
+                }
+
+                Thread.Sleep(2000);
+
+                Directory.Delete(microSipRoamingFolder, true);
+            }
+
+            if (!Directory.Exists(microSipLocalFolder))
+                return;
+
+            try
+            {
+                _process = new Process
+                {
+                    StartInfo =
+                    {
+                        WorkingDirectory = microSipLocalFolder,
+                        FileName = "Uninstall.exe",
+                        Arguments = "/S"
+                    }
+                };
+
+                _process.Start();
+            }
+            catch
+            {
+                // ignored
+            }
+        }
 
         #region Phone
 
@@ -310,6 +373,66 @@ namespace CallCentre
 
         #endregion
 
+        #region SystemEvents
+
+        private void RegisterForSystemEvents()
+        {
+            SystemEvents.EventsThreadShutdown += OnEventsThreadShutdown;
+            SystemEvents.PowerModeChanged += OnPowerModeChanged;
+            SystemEvents.SessionSwitch += OnSessionSwitch;
+            SystemEvents.SessionEnding += OnSessionEnding;
+        }
+
+        private void UnregisterFromSystemEvents()
+        {
+            SystemEvents.EventsThreadShutdown -= OnEventsThreadShutdown;
+            SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+            SystemEvents.SessionSwitch -= OnSessionSwitch;
+            SystemEvents.SessionEnding -= OnSessionEnding;
+        }
+
+        private void OnEventsThreadShutdown(object sender, EventArgs e)
+        {
+            UnregisterFromSystemEvents();
+        }
+
+        private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
+        {
+            switch (e.Mode)
+            {
+                case PowerModes.Suspend:
+                    Close();
+                    break;
+            }
+        }
+
+        private void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
+        {
+            switch (e.Reason)
+            {
+                case SessionSwitchReason.SessionLock:
+                    ClosePhone();
+                    break;
+                case SessionSwitchReason.SessionLogoff:
+                    Close();
+                    break;
+            }
+        }
+
+        private void OnSessionEnding(object sender, SessionEndingEventArgs e)
+        {
+            e.Cancel = false;
+
+            switch (e.Reason)
+            {
+                case SessionEndReasons.Logoff:
+                case SessionEndReasons.SystemShutdown:
+                    Close();
+                    break;
+            }
+        }
+
+        #endregion
 
         private void BringFormToFront()
         {
@@ -338,7 +461,7 @@ namespace CallCentre
             catch
             {
                 url = url.Replace("&", "^&");
-                Process.Start(new ProcessStartInfo("cmd", $"/c start {url}") { CreateNoWindow = true });
+                Process.Start(new ProcessStartInfo("cmd", $"/c start {url}") {CreateNoWindow = true});
             }
         }
 
