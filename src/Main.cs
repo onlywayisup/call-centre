@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Timers;
 using System.Windows.Forms;
 using AutoUpdaterDotNET;
 using CallCentre.Models;
@@ -14,6 +15,7 @@ using IdentityModel.OidcClient;
 using Microsoft.Win32;
 using NAudio.Wave;
 using Newtonsoft.Json;
+using Timer = System.Timers.Timer;
 
 namespace CallCentre
 {
@@ -22,7 +24,9 @@ namespace CallCentre
         private Process _process;
         private SipAccount _account;
         private OidcClient _oidcClient;
-        private LoginResult _loginResult;
+        private Timer _timer;
+        private string _accessToken;
+        private string _refreshToken;
 
         private readonly string _microSipPath = Path.Combine(Environment.CurrentDirectory, "MicroSip");
         private readonly string _microSipConfigPath = Path.Combine(Environment.CurrentDirectory, "MicroSip", "microsip.ini");
@@ -59,117 +63,19 @@ namespace CallCentre
             var version = Assembly.GetEntryAssembly()?.GetName().Version;
             versionLabel.Text = $"Версія: {version}";
 
-            RemoveSystemMicroSip();
-
             LoginUser();
-
-            RegisterForSystemEvents();
         }
 
-        private async void LoginUser()
+        private void Main_Load(object sender, EventArgs e)
         {
-            const string redirectUri = "http://127.0.0.1:7890/";
+            RegisterForSystemEvents();
 
-            var httpListener = new HttpListener();
-            httpListener.Prefixes.Add(redirectUri);
-            httpListener.Start();
+            _timer = new Timer(180000);
 
-            try
-            {
-                var options = new OidcClientOptions
-                {
-                    Authority = Constants.ApiUrl,
-                    ClientId = Constants.ClientId,
-                    Scope = Constants.Scope,
-                    RedirectUri = redirectUri
-                };
+            _timer.Elapsed += MyTimer_TickAsync;
+            _timer.Enabled = true;
 
-                _oidcClient = new OidcClient(options);
-                var state = await _oidcClient.PrepareLoginAsync();
-                OpenBrowser(state.StartUrl);
-
-                var context = await httpListener.GetContextAsync();
-                BringFormToFront();
-                await SendResponseAsync(context);
-
-                _loginResult = await _oidcClient.ProcessResponseAsync(context.Request.RawUrl, state);
-            }
-            catch (Exception exception)
-            {
-                httpListener.Stop();
-
-                var result = MessageBox.Show(exception.Message, "Помилка", MessageBoxButtons.RetryCancel);
-                if (result == DialogResult.Retry)
-                {
-                    LoginUser();
-                }
-                else
-                {
-                    Close();
-                }
-
-                return;
-            }
-            finally
-            {
-                httpListener.Stop();
-                httpListener.Close();
-            }
-
-            if (_loginResult.IsError)
-            {
-                var result = MessageBox.Show(this, _loginResult.Error, "Вхід", MessageBoxButtons.RetryCancel, MessageBoxIcon.Error);
-                if (result == DialogResult.Retry)
-                {
-                    LoginUser();
-                }
-            }
-            else
-            {
-                try
-                {
-                    var http = new HttpWrapper(_loginResult.AccessToken);
-                    _account = http.Invoke<SipAccount>("GET", Constants.AutoProvisioningUrl, string.Empty);
-
-                    userLabel.Text = _account?.DisplayName;
-                    lineLabel.Text = _account?.InternalNumber;
-
-                    CheckDevices();
-                    OpenPhone(_account);
-                }
-                catch
-                {
-                    OpenPhoneButton.Enabled = true;
-
-                    using (var reserve = new Reserve())
-                    {
-                        if (reserve.ShowDialog() == DialogResult.OK)
-                        {
-                            var reserveCode = reserve.richTextBox1.Text;
-                            if (!string.IsNullOrEmpty(reserveCode))
-                            {
-                                var data = Convert.FromBase64String(reserveCode);
-                                var config = Encoding.UTF8.GetString(data);
-                                var account = JsonConvert.DeserializeObject<SipAccount>(config);
-
-                                if (account.DateTime.Date != DateTime.Now.Date)
-                                {
-                                    MessageBox.Show("Застосовано невірний код", "Помилка", MessageBoxButtons.RetryCancel, MessageBoxIcon.Error);
-                                    Close();
-                                }
-
-                                _account = account;
-
-                                userLabel.Text = _account?.DisplayName;
-                                lineLabel.Text = _account?.InternalNumber;
-
-                                CheckDevices();
-                                OpenPhone(_account);
-                            }
-                        }
-                    }
-                }
-            }
+            GC.KeepAlive(_timer);
         }
 
         private void Main_FormClosing(object sender, FormClosingEventArgs e)
@@ -178,13 +84,25 @@ namespace CallCentre
             {
                 ClosePhone();
 
-                var http = new HttpWrapper(_loginResult.AccessToken);
+                var http = new HttpWrapper(_accessToken);
                 http.Invoke<object>("POST", Constants.LogoutUrl, string.Empty);
             }
             catch
             {
                 // ignored
             }
+        }
+
+        private async void MyTimer_TickAsync(object sender, ElapsedEventArgs e)
+        {
+            var refreshToken = await _oidcClient.RefreshTokenAsync(_refreshToken);
+            if (refreshToken.IsError)
+            {
+                Close();
+            }
+
+            _accessToken = refreshToken.AccessToken;
+            _refreshToken = refreshToken.RefreshToken;
         }
 
         private void CheckDevices()
@@ -200,60 +118,6 @@ namespace CallCentre
                 handphonesLabel.Text = headphones ? "Підключено" : "Не під'єднано";
                 handphonesLabel.ForeColor = headphones ? Color.ForestGreen : Color.Red;
             }));
-        }
-
-        private void RemoveSystemMicroSip()
-        {
-            var microSipLocalFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MicroSIP");
-            var microSipRoamingFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MicroSIP");
-
-            if (Directory.Exists(microSipRoamingFolder))
-            {
-                try
-                {
-                    _process = new Process
-                    {
-                        StartInfo =
-                        {
-                            WorkingDirectory = microSipLocalFolder,
-                            FileName = "microsip.exe",
-                            Arguments = "/exit"
-                        }
-                    };
-
-                    _process.Start();
-                }
-                catch
-                {
-                    // ignored
-                }
-
-                Thread.Sleep(2000);
-
-                Directory.Delete(microSipRoamingFolder, true);
-            }
-
-            if (!Directory.Exists(microSipLocalFolder))
-                return;
-
-            try
-            {
-                _process = new Process
-                {
-                    StartInfo =
-                    {
-                        WorkingDirectory = microSipLocalFolder,
-                        FileName = "Uninstall.exe",
-                        Arguments = "/S"
-                    }
-                };
-
-                _process.Start();
-            }
-            catch
-            {
-                // ignored
-            }
         }
 
         #region Phone
@@ -371,6 +235,11 @@ namespace CallCentre
             Process.Start("mmsys.cpl");
         }
 
+        private void toolStripButton1_Click(object sender, EventArgs e)
+        {
+            ClosePhone();
+        }
+
         #endregion
 
         #region SystemEvents
@@ -434,6 +303,121 @@ namespace CallCentre
 
         #endregion
 
+        #region Auth
+
+        private async void LoginUser()
+        {
+            LoginResult loginResult;
+            const string redirectUri = "http://127.0.0.1:7890/";
+
+            var httpListener = new HttpListener();
+            httpListener.Prefixes.Add(redirectUri);
+            httpListener.Start();
+
+
+            try
+            {
+                var options = new OidcClientOptions
+                {
+                    Authority = Constants.ApiUrl,
+                    ClientId = Constants.ClientId,
+                    Scope = Constants.Scope,
+                    RedirectUri = redirectUri
+                };
+
+                _oidcClient = new OidcClient(options);
+                var state = await _oidcClient.PrepareLoginAsync();
+                OpenBrowser(state.StartUrl);
+
+                var context = await httpListener.GetContextAsync();
+                BringFormToFront();
+                await SendResponseAsync(context);
+
+                loginResult = await _oidcClient.ProcessResponseAsync(context.Request.RawUrl, state);
+
+                _accessToken = loginResult.AccessToken;
+                _refreshToken = loginResult.RefreshToken;
+
+                _timer.Start();
+            }
+            catch (Exception exception)
+            {
+                httpListener.Stop();
+
+                var result = MessageBox.Show(exception.Message, "Помилка", MessageBoxButtons.RetryCancel);
+                if (result == DialogResult.Retry)
+                {
+                    LoginUser();
+                }
+                else
+                {
+                    Close();
+                }
+
+                return;
+            }
+            finally
+            {
+                httpListener.Stop();
+                httpListener.Close();
+            }
+
+            if (loginResult.IsError)
+            {
+                var result = MessageBox.Show(this, loginResult.Error, "Вхід", MessageBoxButtons.RetryCancel, MessageBoxIcon.Error);
+                if (result == DialogResult.Retry)
+                {
+                    LoginUser();
+                }
+            }
+            else
+            {
+                try
+                {
+                    var http = new HttpWrapper(loginResult.AccessToken);
+                    _account = http.Invoke<SipAccount>("GET", Constants.AutoProvisioningUrl, string.Empty);
+
+                    userLabel.Text = _account?.DisplayName;
+                    lineLabel.Text = _account?.InternalNumber;
+
+                    CheckDevices();
+                    OpenPhone(_account);
+                }
+                catch
+                {
+                    OpenPhoneButton.Enabled = true;
+
+                    using (var reserve = new Reserve())
+                    {
+                        if (reserve.ShowDialog() == DialogResult.OK)
+                        {
+                            var reserveCode = reserve.richTextBox1.Text;
+                            if (!string.IsNullOrEmpty(reserveCode))
+                            {
+                                var data = Convert.FromBase64String(reserveCode);
+                                var config = Encoding.UTF8.GetString(data);
+                                var account = JsonConvert.DeserializeObject<SipAccount>(config);
+
+                                if (account.DateTime.Date != DateTime.Now.Date)
+                                {
+                                    MessageBox.Show("Застосовано невірний код", "Помилка", MessageBoxButtons.RetryCancel, MessageBoxIcon.Error);
+                                    Close();
+                                }
+
+                                _account = account;
+
+                                userLabel.Text = _account?.DisplayName;
+                                lineLabel.Text = _account?.InternalNumber;
+
+                                CheckDevices();
+                                OpenPhone(_account);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         private void BringFormToFront()
         {
             WindowState = FormWindowState.Minimized;
@@ -461,13 +445,10 @@ namespace CallCentre
             catch
             {
                 url = url.Replace("&", "^&");
-                Process.Start(new ProcessStartInfo("cmd", $"/c start {url}") {CreateNoWindow = true});
+                Process.Start(new ProcessStartInfo("cmd", $"/c start {url}") { CreateNoWindow = true });
             }
         }
 
-        private void toolStripButton1_Click(object sender, EventArgs e)
-        {
-            ClosePhone();
-        }
+        #endregion
     }
 }
