@@ -445,7 +445,7 @@ namespace CallCentre
             catch
             {
                 url = url.Replace("&", "^&");
-                Process.Start(new ProcessStartInfo("cmd", $"/c start {url}") { CreateNoWindow = true });
+                Process.Start(new ProcessStartInfo("cmd", $"/c start {url}") {CreateNoWindow = true});
             }
         }
 
