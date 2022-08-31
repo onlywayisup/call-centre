@@ -9,7 +9,7 @@
         public const string ApiUrl = "https://femma.qexal.app";
 #endif
         public const string HubUrl = ApiUrl + "/api/hubs/microsip";
-        public const string AutoProvisioningUrl = ApiUrl + "/api/v1/microsip/configuration";
+        public const string AutoProvisioningUrl = ApiUrl + "/module/cti/configuration";
         public const string ClientId = "microsip";
         public const string Scope = "openid profile offline_access Qexal.ApiAPI";
     }
