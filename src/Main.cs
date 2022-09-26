@@ -16,6 +16,7 @@ using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Win32;
 using NAudio.Wave;
 using Newtonsoft.Json;
+using System.Web;
 using Timer = System.Timers.Timer;
 
 namespace CallCentre
@@ -68,13 +69,15 @@ namespace CallCentre
             LoginUser();
         }
 
-        private async Task StartSignalR()
+        private async Task StartSignalR(string extension, string displayName)
         {
             var version = Assembly.GetEntryAssembly()?.GetName().Version;
-
+            
             _connection = new HubConnectionBuilder()
-                .WithUrl(Constants.HubUrl, options =>
+                .WithUrl(Constants.ApiUrl + "ctiHub", options =>
                 {
+                    options.Headers.Add("Extension", extension);
+                    options.Headers.Add("DisplayName", HttpUtility.UrlEncode(displayName));
                     options.Headers.Add("Version", version?.ToString());
                     options.Headers.Add("MAC", Helpers.GetMacAddress());
                     options.Headers.Add("Os", Helpers.GetWindowsVersion());
@@ -326,7 +329,7 @@ namespace CallCentre
             {
                 var options = new OidcClientOptions
                 {
-                    Authority = Constants.ApiUrl,
+                    Authority = Constants.Authority,
                     ClientId = Constants.ClientId,
                     Scope = Constants.Scope,
                     RedirectUri = redirectUri
@@ -347,7 +350,6 @@ namespace CallCentre
 
                 _timer.Start();
 
-                await StartSignalR();
             }
             catch (Exception exception)
             {
@@ -389,6 +391,7 @@ namespace CallCentre
                     userLabel.Text = _account?.DisplayName;
                     lineLabel.Text = _account?.InternalNumber;
 
+                    await StartSignalR(_account?.InternalNumber, _account?.DisplayName);
                     CheckDevices();        
                     OpenPhone(_account);
                 }
@@ -424,6 +427,7 @@ namespace CallCentre
                 }
             }
         }
+
 
         private void BringFormToFront()
         {
