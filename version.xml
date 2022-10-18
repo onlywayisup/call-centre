@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <item>
-  <version>1.0.0.48</version>
-  <url>https://github.com/femma-it/call-centre/releases/download/v1.0.0.48/call-centre.zip</url>
+  <version>1.0.0.49</version>
+  <url>https://github.com/femma-it/call-centre/releases/download/v1.0.0.49/call-centre.zip</url>
   <changelog>https://github.com/femma-it/call-centre/releases</changelog>
   <mandatory mode="2">true</mandatory>
 </item>
